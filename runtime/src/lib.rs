@@ -9,7 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 use sp_api::impl_runtime_apis;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
 use sp_runtime::{
-	create_runtime_str, generic, impl_opaque_keys,
+	create_runtime_str, generic, impl_opaque_keys,DispatchError,
 	traits::{AccountIdLookup, BlakeTwo256, Block as BlockT, IdentifyAccount, Verify},
 	transaction_validity::{TransactionSource, TransactionValidity},
 	ApplyExtrinsicResult, MultiSignature,
@@ -37,6 +37,10 @@ pub use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
 pub use sp_runtime::{MultiAddress, Perbill, Permill};
+
+// pallet_contract
+use pallet_contracts::{Frame,Schedule};
+use pallet_contracts_primitives::{Code,ContractResult,InstantiateReturnValue};
 
 // Polkadot & XCM imports
 use pallet_xcm::XcmPassthrough;
@@ -447,6 +451,44 @@ impl template::Config for Runtime {
 	type Event = Event;
 }
 
+// Configure the pallet contracts.
+parameter_types! {
+        pub const SignedClaimHandicap: u32 = 2;
+        pub const TombstoneDeposit: u64 = 16;
+        pub const DepositPerContract: u64 = 8 * DepositPerStorageByte::get();
+        pub const DepositPerStorageByte: u64 = 10_000;
+        pub const DepositPerStorageItem: u64 = 10_000;
+        pub RentFraction: Perbill = Perbill::from_rational(4u32, 10_000u32);
+        pub const SurchargeReward: u64 = 500_000;
+        pub const MaxValueSize: u32 = 16_384;
+        pub const DeletionQueueDepth: u32 = 1024;
+        pub const DeletionWeightLimit: Weight = 500_000_000_000;
+        pub const MaxCodeSize: u32 = 128 * 1024;
+        pub MySchedule: Schedule<Runtime> = <Schedule<Runtime>>::default();
+}
+
+impl pallet_contracts::Config for Runtime {
+        type Time = Timestamp;
+        type Randomness = RandomnessCollectiveFlip;
+        type Currency = Balances;
+        type Event = Event;
+        type RentPayment = ();
+        type SignedClaimHandicap = SignedClaimHandicap;
+        type TombstoneDeposit = TombstoneDeposit;
+        type DepositPerContract = DepositPerContract;
+        type DepositPerStorageByte = DepositPerStorageByte;
+        type DepositPerStorageItem = DepositPerStorageItem;
+        type RentFraction = RentFraction;
+        type SurchargeReward = SurchargeReward;
+        type CallStack = [Frame<Self>; 31];
+        type WeightPrice = ();
+        type WeightInfo = ();
+        type ChainExtension = ();
+        type DeletionQueueDepth = DeletionQueueDepth;
+        type DeletionWeightLimit = DeletionWeightLimit;
+        type Schedule = MySchedule;
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 construct_runtime!(
 	pub enum Runtime where
@@ -476,6 +518,8 @@ construct_runtime!(
 
 		//Template
 		TemplatePallet: template::{Pallet, Call, Storage, Event<T>},
+
+                Contracts: pallet_contracts::{Pallet, Call, Storage, Event<T>},
 	}
 );
 
@@ -590,6 +634,43 @@ impl_runtime_apis! {
 			TransactionPayment::query_fee_details(uxt, len)
 		}
 	}
+
+	impl pallet_contracts_rpc_runtime_api::ContractsApi<Block, AccountId, Balance, BlockNumber ,Hash> for Runtime
+    	{
+       		 fn call(
+       		         origin: AccountId,
+       		         dest: AccountId,
+       		         value: Balance,
+       		         gas_limit: u64,
+       		         input_data: Vec<u8>,
+       		 ) -> pallet_contracts_primitives::ContractExecResult {
+       		         Contracts::bare_call(origin, dest, value, gas_limit, input_data,false)
+      		 }
+
+ 	         fn get_storage(
+               		 address: AccountId,
+                	 key: [u8; 32],
+       		 ) -> pallet_contracts_primitives::GetStorageResult {
+       		         Contracts::get_storage(address, key)
+       		 }
+
+       		 fn rent_projection(
+       		         address: AccountId,
+       		 ) -> pallet_contracts_primitives::RentProjectionResult<BlockNumber> {
+       		         Contracts::rent_projection(address)
+       		 }
+
+       		 fn instantiate(
+       		         _: AccountId,
+       		         _: Balance,
+       		         _: u64,
+       		         _: Code<Hash>,
+       		         _: Vec<u8>,
+       		         _: Vec<u8>,
+       		 ) -> ContractResult<Result<InstantiateReturnValue<AccountId, BlockNumber>, DispatchError>> {
+       		          todo!()
+       		 }
+        }
 
 	#[cfg(feature = "runtime-benchmarks")]
 	impl frame_benchmarking::Benchmark<Block> for Runtime {
